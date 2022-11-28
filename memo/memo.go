@@ -11,23 +11,23 @@ import(
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethclient"
-	"golang.org/x/crypto/sha3"
 	"golang.org/x/xerrors"
 )
 
-const ENDPOINT string = "https://devchain.metamemo.one:8501"
+const ENDPOINT string = "https://chain.metamemo.one:8501"
 const sk string = "8a87053d296a0f0b4600173773c8081b12917cef7419b2675943b0aa99429b62"
 const caddr string = "1EcF7e4E263C3F16194C22eb4460af6E0E8aDF61"
 
-func Transfer(ctx context.Context, to string, value uint64) error {
+func Call(ctx context.Context, data []byte) error {
 	client, err := ethclient.Dial(ENDPOINT)
 	if err != nil {
 		return err
 	}
 	defer client.Close()
 
-	toAddress := common.HexToAddress(to)
-	nonce, err := client.PendingNonceAt(ctx, toAddress)
+	contractAddress := common.HexToAddress(caddr)
+
+	nonce, err := client.PendingNonceAt(ctx, contractAddress)
 	if err != nil {
 		return err
 	}
@@ -37,22 +37,6 @@ func Transfer(ctx context.Context, to string, value uint64) error {
 		return err
 	}
 	log.Println("chainID: ", chainID)
-
-	contractAddress := common.HexToAddress(caddr)
-
-	transferFnSignature := []byte("storeDeposit(address,uint256)")
-
-	hash := sha3.NewLegacyKeccak256()
-	hash.Write(transferFnSignature)
-	methodID := hash.Sum(nil)[:4]
-
-	paddedToAddress := common.LeftPadBytes(toAddress.Bytes(), 32)
-	paddedAmount := common.LeftPadBytes(big.NewInt(int64(value)).Bytes(), 32)
-
-	var data []byte
-	data = append(data, methodID...)
-	data = append(data, paddedToAddress...)
-	data = append(data, paddedAmount...)
 
 	gasLimit := uint64(300000)
 	gasPrice := big.NewInt(1000)
@@ -68,10 +52,10 @@ func Transfer(ctx context.Context, to string, value uint64) error {
 		return err
 	}
 
-	return sendTx(ctx, client, signedTx)
+	return SendTx(ctx, client, signedTx)
 }
 
-func sendTx(ctx context.Context, client *ethclient.Client, signedTx *types.Transaction) error {
+func SendTx(ctx context.Context, client *ethclient.Client, signedTx *types.Transaction) error {
 	err := client.SendTransaction(ctx, signedTx)
 	if err != nil {
 		return err
