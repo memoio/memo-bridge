@@ -5,9 +5,9 @@ import(
 	"time"
 	"context"
 	"math/big"
-	// "encoding/json"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethclient"
@@ -15,8 +15,12 @@ import(
 )
 
 const ENDPOINT string = "https://chain.metamemo.one:8501"
+const storeAddr string = "31e7829Ea2054fDF4BCB921eDD3a98a825242267"
+const contractAddr string = "Ccf7b7F747100f3393a75DDf6864589f76F4eA25"
 const sk string = "8a87053d296a0f0b4600173773c8081b12917cef7419b2675943b0aa99429b62"
-const caddr string = "1EcF7e4E263C3F16194C22eb4460af6E0E8aDF61"
+
+const baseGasLimit uint64 = 300000
+var baseGasPrice *big.Int = big.NewInt(5000)
 
 func Call(ctx context.Context, data []byte) error {
 	client, err := ethclient.Dial(ENDPOINT)
@@ -25,9 +29,9 @@ func Call(ctx context.Context, data []byte) error {
 	}
 	defer client.Close()
 
-	contractAddress := common.HexToAddress(caddr)
+	storeAddress := common.HexToAddress(storeAddr)
 
-	nonce, err := client.PendingNonceAt(ctx, contractAddress)
+	nonce, err := client.PendingNonceAt(ctx, storeAddress)
 	if err != nil {
 		return err
 	}
@@ -38,21 +42,49 @@ func Call(ctx context.Context, data []byte) error {
 	}
 	log.Println("chainID: ", chainID)
 
-	gasLimit := uint64(300000)
-	gasPrice := big.NewInt(1000)
+	contractAddress := common.HexToAddress(contractAddr)
 
-	tx := types.NewTransaction(nonce, contractAddress, big.NewInt(0), gasLimit, gasPrice, data)
 	privateKey, err := crypto.HexToECDSA(sk)
 	if err != nil {
 		return err
 	}
 
-	signedTx, err := types.SignTx(tx, types.NewEIP155Signer(chainID), privateKey)
-	if err != nil {
-		return err
+	var tx *types.Transaction
+	var signedTx *types.Transaction
+	var retry = 10
+	var gasLimit = baseGasLimit
+	var gasPrice = baseGasPrice
+	for {
+
+		if retry == 0 {
+			return xerrors.Errorf("Call Contract Failed")
+		}
+		tx = types.NewTransaction(nonce, contractAddress, big.NewInt(0), gasLimit, gasPrice, data)
+
+		signedTx, err = types.SignTx(tx, types.NewEIP155Signer(chainID), privateKey)
+		if err != nil {
+			return err
+		}
+
+		err = SendTx(ctx, client, signedTx)
+		if err == core.ErrNonceTooLow {
+			nonce++
+		} else if err == core.ErrNonceTooHigh {
+			nonce--
+		} else if err == core.ErrIntrinsicGas {
+			gasPrice.Add(gasPrice, baseGasPrice)
+		} else if err == core.ErrGasLimitReached {
+			gasLimit += baseGasLimit
+		} else if err != nil {
+			return err
+		} else {
+			break
+		}
+
+		retry--
 	}
 
-	return SendTx(ctx, client, signedTx)
+	return nil
 }
 
 func SendTx(ctx context.Context, client *ethclient.Client, signedTx *types.Transaction) error {
@@ -62,7 +94,11 @@ func SendTx(ctx context.Context, client *ethclient.Client, signedTx *types.Trans
 	}
 
 	log.Println("waiting tx complete...")
-	time.Sleep(30 * time.Second)
+	select {
+		case <- ctx.Done():
+			return ctx.Err()
+		case <- time.After(30 * time.Second):
+	}
 
 	receipt, err := client.TransactionReceipt(ctx, signedTx.Hash())
 	if err != nil {
@@ -84,12 +120,12 @@ func SendTx(ctx context.Context, client *ethclient.Client, signedTx *types.Trans
 	return nil
 }
 
-func fromHex(s string) string {
-	if s[0] == '0' && s[1] == 'x' {
-		s = s[2:]
-	}
-	if len(s)%2 == 1 {
-		s = "0" + s
-	}
-	return s
-}
+// func fromHex(s string) string {
+// 	if s[0] == '0' && s[1] == 'x' {
+// 		s = s[2:]
+// 	}
+// 	if len(s)%2 == 1 {
+// 		s = "0" + s
+// 	}
+// 	return s
+// }
