@@ -94,7 +94,13 @@ func Call(ctx context.Context, data []byte) error {
 					return nonceErr
 				}
 
-			case err == core.ErrAlreadyKnown:
+			// case err == core.ErrAlreadyKnown:
+			// 	nonce, nonceErr = awaitPendingNonce(ctx, client, storeAddress)
+			// 	if nonceErr != nil {
+			// 		return nonceErr
+			// 	}
+
+			case err.Error() == "already known":
 				nonce, nonceErr = awaitPendingNonce(ctx, client, storeAddress)
 				if nonceErr != nil {
 					return nonceErr
