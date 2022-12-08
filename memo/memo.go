@@ -51,6 +51,7 @@ func Call(ctx context.Context, data []byte) error {
 
 	var tx *types.Transaction
 	var signedTx *types.Transaction
+	var awaitErr, nonceErr error
 	var retry = 10
 	var gasLimit = baseGasLimit
 	var gasPrice = baseGasPrice
@@ -67,19 +68,50 @@ func Call(ctx context.Context, data []byte) error {
 		}
 
 		err = SendTx(ctx, client, signedTx)
-		if err == core.ErrNonceTooLow {
-			nonce++
-		} else if err == core.ErrNonceTooHigh {
-			nonce--
-		} else if err == core.ErrIntrinsicGas {
-			gasPrice.Add(gasPrice, baseGasPrice)
-		} else if err == core.ErrGasLimitReached {
-			gasLimit += baseGasLimit
-		} else if err != nil {
-			return err
-		} else {
-			break
-		}
+		if err != nil {
+			switch {
+			case err == core.ErrNonceTooLow :
+			    nonce++
+
+			case err == core.ErrNonceTooHigh:
+				nonce--
+
+			case err == core.ErrIntrinsicGas:
+				gasPrice.Add(gasPrice, baseGasPrice)
+
+			case err == core.ErrGasLimitReached:
+				gasLimit += baseGasLimit
+
+			// case err == core.ErrReplaceUnderpriced:
+			// 	nonce, nonceErr = awaitPendingNonce(ctx, client, storeAddress)
+			// 	if nonceErr != nil {
+			// 		return nonceErr
+			// 	}
+
+			case err.Error() == "replacement transaction underpriced":
+				nonce, nonceErr = awaitPendingNonce(ctx, client, storeAddress)
+				if nonceErr != nil {
+					return nonceErr
+				}
+
+			case err == core.ErrAlreadyKnown:
+				nonce, nonceErr = awaitPendingNonce(ctx, client, storeAddress)
+				if nonceErr != nil {
+					return nonceErr
+				}
+
+			case err == core.ErrTxPoolOverflow:
+				awaitErr = await(ctx)
+				if awaitErr != nil {
+					return awaitErr
+				}
+
+			default:
+			    return err
+			}
+	    } else {
+	    	break
+	    }
 
 		retry--
 	}
@@ -118,6 +150,26 @@ func SendTx(ctx context.Context, client *ethclient.Client, signedTx *types.Trans
 	log.Println(receipt.Logs[0].Topics)
 
 	return nil
+}
+
+func await(ctx context.Context) error {
+	select{
+	case <- time.After(time.Second):
+	case <- ctx.Done():
+		return ctx.Err()
+	}
+
+	return nil
+}
+
+func awaitPendingNonce(ctx context.Context, client *ethclient.Client, address common.Address) (uint64, error) {
+	select{
+	case <- time.After(time.Second):
+	case <- ctx.Done():
+		return 0, ctx.Err()
+	}
+
+	return client.PendingNonceAt(ctx, address)
 }
 
 // func fromHex(s string) string {
