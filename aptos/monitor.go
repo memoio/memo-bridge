@@ -54,7 +54,7 @@ func (monitor *AptosMonitor) Start(ctx context.Context) error {
 
 	for {
 		select {
-		case <- time.After(2 * time.Second):
+		case <- time.After(60 * time.Second):
 			events, err := monitor.client.GetEventsByEventHandle(
 				childCtx, 
 				monitor.config.Address, 
@@ -70,8 +70,8 @@ func (monitor *AptosMonitor) Start(ctx context.Context) error {
 				for _, event := range events {
 					go handleDepositEvent(childCtx, event)
 
-					if uint64(event.GUID.CreationNumber) >= monitor.config.Start {
-						monitor.config.Start = uint64(event.GUID.CreationNumber) + 1
+					if uint64(event.SequenceNumber) >= monitor.config.Start {
+						monitor.config.Start = uint64(event.SequenceNumber) + 1
 					}
 				}
 

@@ -10,11 +10,15 @@ import (
 	"bridge/aptos"
 )
 
+const DevnetUrl = "https://fullnode.testnet.aptoslabs.com"
+const TestnetUrl = "https://fullnode.testnet.aptoslabs.com"
+const LocalnetUrl = "http://localhost:8080"
+
 func main() {
 	interrupt := make(chan os.Signal, 1)
 	signal.Notify(interrupt, os.Interrupt)
 
-	monitor := aptos.NewAptosMonitor("http://0.0.0.0:8080", 10 * time.Second)
+	monitor := aptos.NewAptosMonitor(TestnetUrl, 10 * time.Second)
 	err := monitor.Init()
 	if err != nil {
 		log.Println(err)
