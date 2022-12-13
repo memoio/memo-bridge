@@ -16,17 +16,15 @@ import (
 )
 
 const AptosChain = "aptos"
-const ConfigPath = "./config.json"
-
 var ratio = big.NewInt(20000000000)
 
 type AptosMonitor struct {
 	client *AptosClient
 	filename string
-	config AptosEvnetConfig
+	config AptosEventConfig
 }
 
-type AptosEvnetConfig struct {
+type AptosEventConfig struct {
 	Address string
 	EventHandle string
 	FieldName string
@@ -37,14 +35,14 @@ type AptosEvnetConfig struct {
 func NewAptosMonitor(url string, timeout time.Duration) (*AptosMonitor) {
 	var monitor = &AptosMonitor{
 		client: NewAptosClient(url, timeout), 
-		config: AptosEvnetConfig{}, 
+		config: AptosEventConfig{}, 
 	}
 
 	return monitor
 }
 
-func (monitor *AptosMonitor) Init() error {
-	return monitor.readConfig(ConfigPath)
+func (monitor *AptosMonitor) Init(path string) error {
+	return monitor.readConfig(path)
 }
 
 func (monitor *AptosMonitor) Start(ctx context.Context) error {

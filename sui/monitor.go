@@ -5,6 +5,7 @@ import (
 	"time"
 	"context"
 	"math/big"
+	"io/ioutil"
 	"encoding/json"
 
 	"bridge/memo"
@@ -14,78 +15,110 @@ import (
 	"golang.org/x/xerrors"
 )
 
-var depositType = MoveEventType{"0xcce4b28a1b62cf5e6a1a1b756dad67a2aa0ef762::memo_pool::Deposit"}
+const SuiChain = "sui"
+var ratio = big.NewInt(2000000000)
 
 type SuiMonitor struct {
 	client *SuiClient
+	filename string
+	config SuiEventConfig
 }
 
-func NewSuiMonitor(rpcUrl string, wsUrl string) SuiMonitor {
-	client = NewSuiClient(rpcUrl, wsUrl)
-
-	return SuiMonitor{ client: client }
+type SuiEventConfig struct {
+	EventHandle string
+	Start EventID
+	Limit uint64
 }
 
-func (monitor SuiMonitor) Start(ctx context.Context) {
-	err := monitor.client.DialWithContext(ctx)
-	if err != nil {
-		log.Println(err)
-		return
-	}
-	defer monitor.client.Close()
-
-	err := monitor.client.SubscribeEvent(handleDepositEvent, depositType)
-	if err != nil {
-		log.Println("Subscribe error:", err)
-		return
+func NewSuiMonitor(url string, timeout time.Duration) (*SuiMonitor) {
+	var monitor = &SuiMonitor{
+		client: NewSuiClient(url, timeout), 
+		config: SuiEventConfig{}, 
 	}
 
-	chlidCtx, cancel := context.WithCancel(ctx)
+	return monitor
+}
+
+func (monitor *SuiMonitor) Init(path string) error {
+	return monitor.readConfig(path)
+}
+
+func (monitor SuiMonitor) Start(ctx context.Context) error {
+	log.Println("monitor started", monitor.config)
+	childCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	
+
 	for {
-		message, err := monitor.client.ReadMessage()
-		if err != nil {
-			log.Println("read:", err)
-			return
+		select {
+		case <- time.After(60 * time.Second):
+			events, err := monitor.client.GetEventsByMoveEvent(
+				childCtx, 
+				monitor.config.EventHandle, 
+				monitor.config.Start, 
+				monitor.config.Limit, 
+				false, 
+			)
+
+			if err != nil {
+				log.Println("get event error:", err.Error())
+			} else {
+				// TODO: keep unhandled event (store on HD) when handle error happen,
+				for _, event := range events {
+					if event.ID.TxSeq <= monitor.config.Start.TxSeq {
+						continue
+					}
+					
+					go handleDepositEvent(childCtx, event)
+
+					if event.ID.TxSeq >= monitor.config.Start.TxSeq {
+						monitor.config.Start.TxSeq = event.ID.TxSeq + 1
+					}
+				}
+
+				err := monitor.writeConfig()
+				if err != nil {
+					return xerrors.Errorf("write error:%v, And max creation number[%v]", err, monitor.config.Start)
+				}
+			}
+		case <- ctx.Done():
+			return ctx.Err()
 		}
-
-		go handleEventMessage(chlidCtx, message)
 	}
+	return nil
 }
 
-func handleEventMessage(ctx context.Context, message []byte) {
-	var parsed EventMessage
-	err := json.Unmarshal(message, &parsed)
+func (monitor *SuiMonitor) readConfig(filename string) error {
+	data, err := ioutil.ReadFile(filename)
 	if err != nil {
-		log.Println(err)
-		return
+		return err
 	}
 
-	handle, ok := Subscriptions[parsed.Params.Subscription]
-	if !ok {
-		log.Println(xerrors.Errorf("Unexpect Message, don't regist subscription[%v]", parsed.Params.Subscription))
-		return
-	}
-
-	// event id
-	// eventID := parsed.Params.Result.ID
-
-	err = handle(ctx, parsed.Params.Result.Event)
+	err = json.Unmarshal(data, &monitor.config)
 	if err != nil {
-		log.Println(err)
+		return err
 	}
-	return
+	monitor.filename = filename
+
+	return json.Unmarshal(data, &monitor.config)
 }
 
-func handleDepositEvent(ctx context.Context, event types.SuiEvent) error {
+func (monitor *SuiMonitor) writeConfig() error {
+	data, err := json.MarshalIndent(monitor.config, "", "\t")
+	if err != nil {
+		return err
+	}
+
+	return ioutil.WriteFile(monitor.filename, data, 0644)
+}
+
+func handleDepositEvent(ctx context.Context, event SuiEventEnvelope) error {
 	type DepositEvent struct {
 		Sender string        `json:"sender"`
 		Amount uint64        `json:"amount"`
 	}
 
 	var deposit DepositEvent
-	data, err := json.Marshal(event.MoveEvent.Fields)
+	data, err := json.Marshal(event.Event.MoveEvent.Fields)
 	if err != nil {
 		return err
 	}
@@ -104,13 +137,16 @@ func handleDepositEvent(ctx context.Context, event types.SuiEvent) error {
 	hash.Write(funcSignature)
 	methodID := hash.Sum(nil)[:4]
 
+	amount := big.NewInt(int64(deposit.Amount))
+	amount.Mul(amount, ratio)
+
 	// calculate Chain ID (type:string) padded bytes
 	paddedChainIDLen := common.LeftPadBytes(big.NewInt(int64(len(SuiChain))).Bytes(), 32)
 	paddedChainID := common.RightPadBytes([]byte(SuiChain), 32)
 
 	toAddress := common.HexToAddress(deposit.Sender)
 	paddedToAddress := common.LeftPadBytes(toAddress.Bytes(), 32)
-	paddedAmount := common.LeftPadBytes(big.NewInt(int64(deposit.Amount)).Bytes(), 32)
+	paddedAmount := common.LeftPadBytes(amount.Bytes(), 32)
 	paddedChainIDOffset := common.LeftPadBytes(big.NewInt(32 * 3).Bytes(), 32)
 
 	var contractData []byte

@@ -14,12 +14,14 @@ const DevnetUrl = "https://fullnode.testnet.aptoslabs.com"
 const TestnetUrl = "https://fullnode.testnet.aptoslabs.com"
 const LocalnetUrl = "http://localhost:8080"
 
+const ConfigPath = "./aptos/config.json"
+
 func main() {
 	interrupt := make(chan os.Signal, 1)
 	signal.Notify(interrupt, os.Interrupt)
 
 	monitor := aptos.NewAptosMonitor(TestnetUrl, 10 * time.Second)
-	err := monitor.Init()
+	err := monitor.Init(ConfigPath)
 	if err != nil {
 		log.Println(err)
 		return

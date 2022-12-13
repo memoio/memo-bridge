@@ -5,19 +5,20 @@ import (
 	"io/ioutil"
 	"encoding/json"
 
-	"bridge/aptos"
+	"bridge/sui"
 )
 
 func main() {
-	config := aptos.AptosEvnetConfig{
-		Address: "0x8a51d48d19d02dec01fcf2014f5d04d21b97058346930ba21b85a61105c6b240", 
-		EventHandle: "0x8a51d48d19d02dec01fcf2014f5d04d21b97058346930ba21b85a61105c6b240::memo_pool::MemoPool", 
-		FieldName: "deposit_events", 
-		Start: 0, 
+	config := sui.SuiEventConfig{ 
+		EventHandle: "0x41c1082a0fdd7d4d333c67a882638dbc754a8d1e::memo_pool::Deposit",  
+		Start: sui.EventID{
+			TxSeq: 0, 
+			EventSeq: 0, 
+		}, 
 		Limit: 10, 
 	}
 
-	data, err := json.Marshal(config)
+	data, err := json.MarshalIndent(config, "", "\t")
 	if err != nil {
 		log.Println(err)
 		return

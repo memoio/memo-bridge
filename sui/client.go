@@ -2,88 +2,84 @@ package sui
 
 import (
 	"time"
+	"bytes"
 	"context"
+	"net/http"
+	"io/ioutil"
 	"encoding/json"
 
-	"github.com/gorilla/websocket"
+	"golang.org/x/xerrors"
 )
 
-var Subscriptions = make(map[uint64]func(ctx context.Context, event SuiEvent) error)
-
 type SuiClient struct {
-	rpcUrl string
-	wsUrl string
-
-	rpcClient *http.Client
-	wsClient *websocket.Conn
+	baseUrl string
+	httpClient *http.Client
 }
 
-func NewSuiClient(rpcUrl string, wsUrl string) (*SuiClient) {
-	client = &SuiClient{
-		rpcUrl: rpcUrl, 
-		wsUrl: wsUrl, 
-
-		rpcClient: nil, 
-		wsClient: nil, 
+func NewSuiClient(url string, timeout time.Duration) *SuiClient {
+	var client = &SuiClient{
+		baseUrl: url,
+		httpClient: &http.Client{ Timeout: timeout },
 	}
 
 	return client
 }
 
-func (client *Client) DailWithContext(ctx context.Context) error {
-	wsClient, _, err := websocket.DefaultDialer.DialContext(ctx, client.wsUrl, nil)
-	if err != nil {
-		return err
-	}
-
-	client.wsClient = wsClient
-	return nil
-}
-
-func (client *Client) Close() {
-	if client.wsClient != nil {
-		client.wsClient.Close()
-		client.wsClient = nil
-	}
-}
-
-func (client *SuiClient) SubscribeEvent(handle func(ctx context.Context, event types.SuiEvent) error, params ...interface{}) error {
-	reqMessage := types.RequestMessage{
+func (client *SuiClient) GetEventsByMoveEvent(
+	ctx context.Context, 
+	moveEvent string, 
+	eventID EventID,  
+	limit uint64, 
+	order bool, 
+) ([]SuiEventEnvelope, error) {
+	reqMessage := RequestMessage{
 		Jsonrpc: "2.0",
 		Id:      1,
-		Method:  "sui_subscribeEvent",
-		Params:  params,
+		Method:  "sui_getEvents",
+		Params:  []interface{} {
+			MoveEventType{ moveEvent }, 
+			eventID, 
+			limit, 
+			order, 
+		},
 	}
 	data, err := json.Marshal(&reqMessage)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	log.Println(string(data))
 
-	err = c.WriteMessage(websocket.TextMessage, data)
+	req, err := http.NewRequestWithContext(ctx, "POST", client.baseUrl, bytes.NewReader(data))
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	_, respBytes, err := c.ReadMessage()
+	req.Header.Add("Content-Type", "application/json")
+	res, err := client.httpClient.Do(req)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	log.Println("recv:", string(respBytes))
+	defer res.Body.Close()
 
-	var respMsg types.RespondMessage
-
-	err = json.Unmarshal(respBytes, &respMsg)
+	body, err := ioutil.ReadAll(res.Body) 
 	if err != nil {
-		return err
+		return nil, err
 	}
-	// regist handle function
-	log.Println(respMsg)
-	Subscriptions[respMsg.Result] = handle
-	return nil
-}
 
-func (client *SuiClient) ReadMessage() ([]byte, error) {
-	_, message, err:= client.ReadMessage()
-	return message, err
+	if res.StatusCode != http.StatusOK {
+		return nil, xerrors.Errorf("Respond code[%d]: %s", res.StatusCode, string(body))
+	}
+
+	var errMsg ErrorMessage
+	err = json.Unmarshal(body, &errMsg)
+	if err == nil && len(errMsg.Error.Message) != 0 && errMsg.Error.ErrorCode != 0 {
+		return nil, xerrors.Errorf("Respond code[%d], Error message%s", errMsg.Error.ErrorCode, errMsg.Error.Message)
+	}
+
+	var resp RespondMessage
+	err = json.Unmarshal(body, &resp)
+	if err != nil {
+		return nil, err
+	}
+
+	return resp.Result.Events, err
 }
